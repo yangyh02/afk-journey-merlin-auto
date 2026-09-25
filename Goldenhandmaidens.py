@@ -28,6 +28,53 @@ def get_work_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 CONFIG_FILE = get_work_path("game_bot_config.json")
+LOG_FILE = get_work_path("game_bot.log")
+_FILE_WRITE_ERROR_CALLBACK = None
+
+
+def _notify_file_write_error(path):
+    if _FILE_WRITE_ERROR_CALLBACK is not None:
+        _FILE_WRITE_ERROR_CALLBACK(path)
+
+
+class _PersistentStdout:
+    """同时保留控制台输出和写入本地日志文件。"""
+
+    def __init__(self, stream, path):
+        self.stream = stream
+        self.path = path
+        self.lock = threading.Lock()
+
+    def write(self, text):
+        if not text:
+            return 0
+        try:
+            self.stream.write(text)
+            self.stream.flush()
+        except Exception:
+            # 打包后的 GUI 程序可能没有可用控制台，忽略控制台输出失败。
+            pass
+        try:
+            with self.lock:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(text)
+        except Exception:
+            _notify_file_write_error(self.path)
+        return len(text)
+
+    def flush(self):
+        try:
+            self.stream.flush()
+        except Exception:
+            pass
+
+
+def _enable_persistent_console_log():
+    if not isinstance(sys.stdout, _PersistentStdout):
+        sys.stdout = _PersistentStdout(sys.stdout, LOG_FILE)
+
+
+_enable_persistent_console_log()
 
 def load_config():
     """加载配置文件"""
@@ -81,6 +128,8 @@ class GameBotGUI:
     def __init__(self, root):
         _ensure_config_files()
         self.root = root
+        global _FILE_WRITE_ERROR_CALLBACK
+        _FILE_WRITE_ERROR_CALLBACK = self._schedule_file_write_error
         self.root.title("梅林初号机")
         self.root.geometry("1050x700")
         
@@ -199,6 +248,13 @@ class GameBotGUI:
         )
         self.view_log_btn.pack(side=tk.LEFT, padx=5)
 
+        self.clear_log_btn = ttk.Button(
+            control_frame,
+            text="清空日志",
+            command=self.clear_log_file
+        )
+        self.clear_log_btn.pack(side=tk.LEFT, padx=5)
+
         self.help_btn = ttk.Button(
             control_frame,
             text="帮助",
@@ -301,9 +357,39 @@ class GameBotGUI:
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         log_text.configure(yscrollcommand=scrollbar.set)
         
-        # 复制当前日志内容
-        log_text.insert(tk.END, self.log_text.get("1.0", tk.END))
-        log_text.see(tk.END)
+        def refresh_log():
+            try:
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                content = ""
+            except Exception as e:
+                content = f"读取日志失败: {e}\n"
+            log_text.configure(state=tk.NORMAL)
+            log_text.delete("1.0", tk.END)
+            log_text.insert(tk.END, content)
+            log_text.see(tk.END)
+            log_text.configure(state=tk.DISABLED)
+
+        log_text.configure(state=tk.DISABLED)
+        button_frame = ttk.Frame(log_frame)
+        button_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        ttk.Button(button_frame, text="刷新", command=refresh_log).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="清空文件", command=self.clear_log_file).pack(side=tk.LEFT)
+        refresh_log()
+
+    def clear_log_file(self):
+        if not messagebox.askyesno("清空日志", "确定要清空本地日志文件吗？"):
+            return
+        try:
+            with open(LOG_FILE, "w", encoding="utf-8"):
+                pass
+            self.log_text.delete("1.0", tk.END)
+            timestamp = time.strftime("%H:%M:%S")
+            self.log_text.insert(tk.END, f"[{timestamp}] 本地日志文件已清空（此提示不会写入文件）\n")
+            self.log_text.see(tk.END)
+        except Exception as e:
+            messagebox.showerror("清空失败", str(e))
 
     def show_help_window(self):
         help_window = tk.Toplevel(self.root)
@@ -591,7 +677,23 @@ class GameBotGUI:
                     level = hero_levels.get(hero_name, "高")
                     f.write(f"{hero_name},{level}\n")
         except Exception as e:
+            _notify_file_write_error(WAREHOUSE_TXT_PATH)
             self.log(f"写入仓库文件失败: {str(e)}")
+
+    def _schedule_file_write_error(self, path):
+        if getattr(self, "_file_write_error_notified", False):
+            return
+        self._file_write_error_notified = True
+        self._file_write_error_pending = True
+        self.root.after(0, lambda: self._show_file_write_error(path))
+
+    def _show_file_write_error(self, path):
+        self._file_write_error_pending = False
+        messagebox.showerror(
+            "文件写入失败",
+            f"无法写入文件：\n{path}\n\n"
+            "当前文件夹可能没有写入权限，请将程序移动到其他可写文件夹后重试。",
+        )
     
     def create_shouquguajijiangli_params(self, script, row=0):
         ttk.Label(self.param_frame, text="付费购买次数 (0-2):").grid(row=row, column=0, sticky=tk.W, pady=2)
@@ -942,14 +1044,11 @@ class GameBotGUI:
                                 try:
                                     huanling_result = flow_push.main(skip_manual=skip_manual, retry_count=retry_count)
                                     if huanling_result is False:
-                                        self.log("幻灵推图流程失败，停止循环推图。")
-                                        cycle_ok = False
-                                        break
+                                        # 单个模式结束/失败不是循环失败，按设计切换到普通推图。
+                                        self.log("幻灵推图流程结束，切换到普通推图。")
                                 except Exception as e:
                                     self.log(f"幻灵推图出错: {str(e)}")
-                                    self.log("检测到推图模块异常，停止循环推图，避免高速空转。")
-                                    cycle_ok = False
-                                    break
+                                    self.log("幻灵推图异常，继续切换到普通推图。")
                                 
                                 if self.stop_event.is_set():
                                     break
@@ -958,14 +1057,11 @@ class GameBotGUI:
                                 try:
                                     push_result = push.main(skip_manual=skip_manual, retry_count=retry_count)
                                     if push_result is False:
-                                        self.log("推图流程失败，停止循环推图。")
-                                        cycle_ok = False
-                                        break
+                                        # 单个模式结束/失败不是循环失败，下一轮重新进入幻灵推图。
+                                        self.log("普通推图流程结束，下一轮切换到幻灵推图。")
                                 except Exception as e:
                                     self.log(f"推图出错: {str(e)}")
-                                    self.log("检测到推图模块异常，停止循环推图，避免高速空转。")
-                                    cycle_ok = False
-                                    break
+                                    self.log("普通推图异常，下一轮继续切换到幻灵推图。")
                                 
                                 if self.stop_event.is_set():
                                     break
@@ -1042,8 +1138,14 @@ class GameBotGUI:
         
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        line = f"[{timestamp}] {message}\n"
+        self.log_text.insert(tk.END, line)
         self.log_text.see(tk.END)
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            _notify_file_write_error(LOG_FILE)
     
     def save_config(self):
         """保存配置"""

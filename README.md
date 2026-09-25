@@ -41,7 +41,8 @@
 ├── goldenhandmaidens.exe
 ├── shared/
 ├── game_bot_config.json         
-└── warehouse_heroes.txt
+├── warehouse_heroes.txt
+└── game_bot.log
 ```
 ### 2. 运行程序
 - **启动游戏并进入主界面。**
@@ -80,8 +81,11 @@
 ├── goldenhandmaidens.exe  主程序
 ├── shared/  程序运行时需要的文件夹（程序自动生成）
 ├── game_bot_config.json   配置文件（程序自动生成）      
-└── warehouse_heroes.txt   仓库英雄记录（程序自动生成）
+├── warehouse_heroes.txt   仓库英雄记录（程序自动生成）
+└── game_bot.log           本地持久化日志，用于查看和反馈问题
 ```
+
+- **日志**：GUI 日志和控制台详细日志都会保存到 `game_bot.log`，可在程序中查看、刷新和清空。
 
 ### 5.注意事项
 - **首次运行**：请务必运行一次仓库管理。

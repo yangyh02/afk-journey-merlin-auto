@@ -35,6 +35,7 @@ HERO_RACE = {
     "nvyao": "wl", "gushe": "wl", "xuenv": "wl",
     "yi": "wl", "cangbai": "wl", "gubian": "wl", "gouzi": "wl",
     "shixianggui": "wl", "mubei": "wl", "walika": "wl", "chuanzhang": "wl",
+    "aidejia": "wl", "sainie": "wl",
 
     # === 半神 ===
     "zhongshen": "bs", "donghou": "bs",
@@ -52,6 +53,7 @@ HERO_RACE = {
     "meimo": "em", "bingmo": "em",
     "xiaochou": "em", "xida": "em",
     "shayu": "em",
+    "xing": "em",
 
     # === 虚空 ===
     "panduola": "xk",
@@ -92,6 +94,7 @@ HERO_JOB = {
     "nvyao": "fs", "gushe": "fs", "xuenv": "fs",
     "yi": "yx", "cangbai": "yx", "gubian": "yx", "gouzi": "yx",
     "shixianggui": "zs", "mubei": "zs", "walika": "zs", "chuanzhang": "zs",
+    "aidejia": "fs", "sainie": "ss",
 
     # === 半神 ===
     "zhongshen": "tk", "donghou": "tk",
@@ -123,6 +126,7 @@ PUSH_COMMON_HEROES = [
     "jiala",                          # 蛮血: 法师
     "donghou", "shuangzi", "niaoshen", "luolan",  # 半神: 坦克,辅助,游侠,辅助
     "paomo", "shumo", "meimo", "xida",  # 恶魔: 坦克,辅助,法师,游侠
+    "aidejia", "sainie", "xing",     # 亡灵/恶魔: 法师,射手,法师
     "fulilian",                       # 虚空: 法师
 ]
 
@@ -163,4 +167,5 @@ HERO_CN_NAMES = {
     "renyu": "人鱼", "peiji": "佩吉", "liuyan": "六眼",
     "luolan": "罗兰", "wangzi": "王子",
     "manniao": "蛮鸟",
+    "aidejia": "埃德加", "sainie": "塞涅", "xing": "星",
 }

@@ -593,6 +593,8 @@ STATE_DONE = "done"                      # 流程结束
 
 # 单次进入阵容界面最多检查的阵容套数（防止阵容列表无限循环滚动导致死循环）
 MAX_LINEUP_SCAN = 30
+RIGHT_RETRY_COUNT = 3
+RIGHT_RETRY_TIMEOUT = 1.0
 
 # 整个推图流程最多允许的状态切换次数（安全阀）
 MAX_TRANSITIONS = 500
@@ -669,23 +671,23 @@ class PushFlow:
     def _wait_for_any_state(self, candidates, timeout=10.0, interval=0.25, allow_gift_recovery=True):
         """等待目标状态模板出现，返回命中的模板路径；超时返回 None。"""
         deadline = time.time() + timeout
+        missed_rounds = 0
         while time.time() < deadline:
+            # 一轮必须完整检查所有候选模板；只有全部未命中才算一次未命中。
             for template_path, threshold in candidates:
                 if find_center_silent(template_path, threshold=threshold, timeout=0.25):
                     return template_path
-            time.sleep(interval)
 
-        # 目标状态完全没有出现时，可能被礼包界面遮挡；只在超时恢复路径处理。
-        if allow_gift_recovery and find_center_silent(tpl_tuichulibao, threshold=0.8, timeout=0.5):
-            print("未识别到目标状态，检测到礼包界面，尝试点击 tuichulibao...")
-            if wait_and_click(tpl_tuichulibao, "tuichulibao", 0.8, timeout=3.0):
-                time.sleep(0.5)
-                return self._wait_for_any_state(
-                    candidates,
-                    timeout=min(timeout, 5.0),
-                    interval=interval,
-                    allow_gift_recovery=False,
-                )
+            missed_rounds += 1
+            if allow_gift_recovery and missed_rounds >= 3:
+                missed_rounds = 0
+                if find_center_silent(tpl_tuichulibao, threshold=0.8, timeout=0.5):
+                    print("连续 3 轮未识别到目标状态，检测到礼包界面，尝试点击 tuichulibao...")
+                    if wait_and_click(tpl_tuichulibao, "tuichulibao", 0.8, timeout=3.0):
+                        time.sleep(0.5)
+                        continue
+
+            time.sleep(interval)
         return None
 
     def _wait_for_entry(self, timeout=10.0):
@@ -833,10 +835,12 @@ class PushFlow:
 
     def _st_on_end(self):
         """end(k)：通过一段关卡后失败，重置阵容状态并重新进入模式。"""
+        # end(k) 表示已经成功推进过，下一次应从第一套阵容重新开始。
         self.lineup_fail = 0
         self.lineup_index = -1
         self.have_lineup = False
-        print("检测到 end(k)：重置当前阵容连续失败次数、阵容编号，并重新进入模式1。")
+        self.lineup_start = 0
+        print("检测到 end(k)：推图成功，重置阵容编号和失败次数，重新进入模式1。")
         if not wait_and_click(tpl_end, "end(k)_click", 0.8):
             print("点击 end(k) 失败，退出推图。")
             return self._done(False)
@@ -897,6 +901,19 @@ class PushFlow:
             return self._done(False)
         return STATE_LINEUP_SELECT
 
+    def _click_next_lineup(self, action_name):
+        """连续三次短等待识别 right，全部失败才判定没有下一套阵容。"""
+        for attempt in range(1, RIGHT_RETRY_COUNT + 1):
+            if wait_and_click(
+                tpl_right,
+                f"{action_name}（第 {attempt}/{RIGHT_RETRY_COUNT} 次）",
+                0.8,
+                timeout=RIGHT_RETRY_TIMEOUT,
+            ):
+                return True
+        print("连续 3 次未找到 right.png，判定阵容已经用完。")
+        return False
+
     def _st_lineup_select(self):
         """在阵容界面从 self.lineup_start 开始往后找可用阵容。"""
         current = 0
@@ -906,7 +923,7 @@ class PushFlow:
             print("进入阵容界面，先向右点击 0 次，跳过已经用过的阵容。")
 
         while current < self.lineup_start:
-            if not wait_and_click(tpl_right, f"right(h) 跳过阵容 {current}", 0.8):
+            if not self._click_next_lineup(f"right(h) 跳过阵容 {current}"):
                 # 还没跳够 start_index 次就已经点不到 right，说明本来阵容数就没那么多
                 print("阵容数量不足以跳到指定起点，采用当前可见阵容并视为无更多阵容。")
                 wait_and_click(tpl_oneclick, "oneclick(i_at_end)", 0.8)
@@ -941,7 +958,7 @@ class PushFlow:
                             print("点击取消失败，跳过当前阵容。")
                         time.sleep(1.0)
                         print(f"阵容 {current} 不可用，尝试切到下一套。")
-                        if not wait_and_click(tpl_right, f"right(h) 从阵容 {current} 切到下一套", 0.8):
+                        if not self._click_next_lineup(f"right(h) 从阵容 {current} 切到下一套"):
                             # 点不到 right 说明已经是最后一套
                             print("已经是最后一套阵容，且检测到未拥有标志，仍然采用当前阵容后结束。")
                             wait_and_click(tpl_oneclick, "oneclick(i_last)", 0.8)
@@ -964,7 +981,7 @@ class PushFlow:
                 print(f"阵容 {current} 练度不足，尝试切到下一套。")
 
             print(f"阵容 {current} 含 g 或练度不满足，尝试点击 right(h) 切到下一套。")
-            if not wait_and_click(tpl_right, f"right(h) 从阵容 {current} 切到下一套", 0.8):
+            if not self._click_next_lineup(f"right(h) 从阵容 {current} 切到下一套"):
                 # 点不到 right 说明已经是最后一套
                 print("已经是最后一套阵容，且含 g，仍然采用当前阵容后结束。")
                 wait_and_click(tpl_oneclick, "oneclick(i_last)", 0.8)
